@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a43">
+  <title>Dashboard de resistencia del concreto</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #102a43;
+      --muted: #526777;
+      --accent: #087e8b;
+      --paper: #f3f7fa;
+      --card: #ffffff;
+      --line: #dce6ed;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    header {
+      background: var(--ink);
+      color: white;
+      padding: 28px 24px;
+    }
+    header h1 { margin: 0 0 8px; font-size: clamp(1.55rem, 3vw, 2.35rem); }
+    header p { margin: 0; color: #d9f1f2; }
+
+    main { max-width: 1440px; margin: auto; padding: 24px; }
+
+    .load-panel, .card, .metric {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      box-shadow: 0 5px 18px #102a430b;
+    }
+
+    .load-panel { padding: 18px 20px; margin-bottom: 20px; }
+    .load-panel h2, .card h2 { margin: 0 0 8px; font-size: 1.1rem; }
+    .load-panel p, .hint { margin: 0; color: var(--muted); font-size: .92rem; }
+    input[type="file"], input[type="number"] {
+      border: 1px solid #bdccd7;
+      border-radius: 8px;
+      padding: 10px;
+      background: white;
+      color: var(--ink);
+    }
+    input[type="file"] { max-width: 100%; }
+    input[type="number"] { width: 150px; }
+
+    #status { margin-top: 10px; color: var(--accent); font-weight: 600; }
+    #status.error { color: #c0392b; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .metric { padding: 16px; }
+    .metric span { display: block; color: var(--muted); font-size: .85rem; margin-bottom: 6px; }
+    .metric strong { font-size: 1.5rem; color: var(--accent); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+    .card { padding: 18px 20px; }
+    .card.wide { grid-column: 1 / -1; }
+    .chart { height: 420px; }
+    .chart.tall { height: 520px; }
+
+    .model-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      margin: 12px 0;
+    }
+    .model-controls label { font-weight: 600; }
+    .result { font-size: 1.15rem; font-weight: 700; color: var(--accent); }
+
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Dashboard de resistencia del concreto</h1>
+    <p>Indicadores, análisis de mezclas y predicción de resistencia</p>
+  </header>
+
+  <main>
+    <section class="load-panel">
+      <h2>Carga de datos</h2>
+      <p>Selecciona el archivo <strong>Pervious_Concrete_0.csv</strong>. Los datos se procesan en tu navegador y no se envían a ningún servidor.</p>
+      <p style="margin:10px 0;"><input id="csv-file" type="file" accept=".csv,text/csv"></p>
+      <div id="status">Esperando archivo…</div>
+    </section>
+
+    <section class="metrics">
+      <div class="metric"><span>Resistencia promedio</span><strong id="m-avg">—</strong></div>
+      <div class="metric"><span>Resistencia máxima</span><strong id="m-max">—</strong></div>
+      <div class="metric"><span>Resistencia mínima</span><strong id="m-min">—</strong></div>
+      <div class="metric"><span>Registros analizados</span><strong id="m-count">—</strong></div>
+      <div class="metric"><span>Edad promedio</span><strong id="m-age">—</strong></div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Distribución de resistencia</h2>
+        <p id="distribution-stats" class="hint">Media, moda, mediana y desviación estándar se mostrarán al cargar datos.</p>
+        <div id="histogram" class="chart"></div>
+      </article>
+
+      <article class="card">
+        <h2>Correlaciones entre componentes y resistencia</h2>
+        <div id="heatmap" class="chart tall"></div>
+        <p class="hint">La correlación indica asociación lineal; no demuestra causalidad. Se omiten las columnas constantes (por ejemplo, la edad si todas las muestras tienen 28 días).</p>
+      </article>
+
+      <article class="card wide">
+        <h2>Vacíos, diseño de mezcla y resistencia</h2>
+        <p class="hint">Cada punto representa una mezcla. Gira y acerca el gráfico; al pasar el cursor se muestran las cantidades de los componentes.</p>
+        <div id="scatter3d" class="chart tall"></div>
+      </article>
+
+      <article class="card wide">
+        <h2>Resistencia promedio y diseño de mezcla por % de vacíos</h2>
+        <div id="timeseries" class="chart"></div>
+        <p class="hint">Los componentes mostrados en esta serie son promedios de las mezclas observadas para cada % de vacíos.</p>
+      </article>
+
+      <article class="card wide">
+        <h2>Modelo predictivo lineal</h2>
+        <p class="hint">Regresión lineal simple: % de vacíos como entrada y resistencia a la compresión como objetivo.</p>
+        <div class="model-controls">
+          <label for="void-input">% de vacíos para la predicción</label>
+          <input id="void-input" type="number" min="0" max="100" step="1" value="20">
+          <span id="prediction-result" class="result">—</span>
+          <span id="model-r2" class="hint">—</span>
+        </div>
+        <p id="model-warning" class="hint"></p>
+        <div id="model-chart" class="chart"></div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const VOIDS = "% Voids";
+    const AGE = "Age (Day)";
+    const TARGET = "Compressive Strength (Kg/m2)";
+    const COMPONENTS = [
+      { name: "Cemento", column: "Cement KG/M3 (component 1)" },
+      { name: "Agregado grueso", column: "Coarse Aggregate KG/M3 (component 2)" },
+      { name: "Agregado fino", column: "Fine Aggregate KG/M3 (component 3)" },
+      { name: "Agua", column: "Water KG/M3 (component 4)" },
+      { name: "Superplastificante", column: "Superplasticizer KG/M3 (component 5)" }
+    ];
+    const OPTIONAL = [{ name: "Permeabilidad K (mm/seg)", column: "Permeability coefficient K (mm/seg)" }];
+    const REQUIRED = [TARGET, AGE, VOIDS, ...COMPONENTS.map((c) => c.column)];
+
+    let rows = [];
+    let model = null;
+
+    /* ---------- Lectura del CSV ---------- */
+    function splitLine(line, delimiter) {
+      const cells = [];
+      let current = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+          else inQuotes = !inQuotes;
+        } else if (ch === delimiter && !inQuotes) {
+          cells.push(current.trim());
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+      cells.push(current.trim());
+      return cells;
+    }
+
+    function parseCSV(text) {
+      const clean = text.replace(/^\uFEFF/, "");
+      const lines = clean.split(/\r?\n/).filter((l) => l.trim() !== "");
+      if (lines.length < 2) throw new Error("El CSV está vacío o no tiene datos.");
+      const delimiter = lines[0].includes(";") && !lines[0].includes(",") ? ";" : ",";
+      return lines.map((l) => splitLine(l, delimiter));
+    }
+
+    function prepareData(text) {
+      const table = parseCSV(text);
+      const header = table[0].map((h) => h.replace(/^\uFEFF/, "").trim());
+      const indexByHeader = new Map(header.map((h, i) => [h, i]));
+
+      const missing = REQUIRED.filter((c) => !indexByHeader.has(c));
+      if (missing.length) {
+        throw new Error("Faltan columnas requeridas en el CSV: " + missing.join(", "));
+      }
+      const optionalPresent = OPTIONAL.filter((o) => indexByHeader.has(o.column));
+      const columnsToRead = [...REQUIRED, ...optionalPresent.map((o) => o.column)];
+
+      const seen = new Set();
+      let duplicates = 0;
+      const out = [];
+
+      for (let r = 1; r < table.length; r++) {
+        const cells = table[r];
+        if (cells.length !== header.length) {
+          throw new Error("El CSV contiene filas con una cantidad de columnas incorrecta.");
+        }
+        const signature = JSON.stringify(cells);
+        if (seen.has(signature)) { duplicates += 1; continue; }
+        seen.add(signature);
+
+        const record = {};
+        for (const column of columnsToRead) {
+          const value = Number(cells[indexByHeader.get(column)]);
+          if (!Number.isFinite(value)) {
+            throw new Error(`Se encontró un valor no numérico en la columna "${column}".`);
+          }
+          record[column] = value;
+        }
+        out.push(record);
+      }
+      if (!out.length) throw new Error("No hay registros válidos para analizar.");
+
+      rows = out;
+      return { duplicates, originalCount: table.length - 1, optionalPresent };
+    }
+
+    /* ---------- Estadística ---------- */
+    function mean(values) {
+      return values.reduce((sum, v) => sum + v, 0) / values.length;
+    }
+
+    function median(values) {
+      const sorted = [...values].sort((a, b) => a - b);
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+    }
+
+    function mode(values) {
+      const counts = new Map();
+      values.forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
+      let best = null, bestCount = 0;
+      [...counts.entries()].sort((a, b) => a[0] - b[0]).forEach(([v, c]) => {
+        if (c > bestCount) { best = v; bestCount = c; }
+      });
+      return best;
+    }
+
+    function stdDev(values) {
+      if (values.length < 2) return 0;
+      const m = mean(values);
+      return Math.sqrt(values.reduce((s, v) => s + (v - m) ** 2, 0) / (values.length - 1));
+    }
+
+    function correlation(a, b) {
+      const ma = mean(a), mb = mean(b);
+      let num = 0, da = 0, db = 0;
+      for (let i = 0; i < a.length; i++) {
+        num += (a[i] - ma) * (b[i] - mb);
+        da += (a[i] - ma) ** 2;
+        db += (b[i] - mb) ** 2;
+      }
+      return da === 0 || db === 0 ? NaN : num / Math.sqrt(da * db);
+    }
+
+    function fitLinear(x, y) {
+      const mx = mean(x), my = mean(y);
+      let sxy = 0, sxx = 0, ssTot = 0;
+      for (let i = 0; i < x.length; i++) {
+        sxy += (x[i] - mx) * (y[i] - my);
+        sxx += (x[i] - mx) ** 2;
+        ssTot += (y[i] - my) ** 2;
+      }
+      const slope = sxx === 0 ? 0 : sxy / sxx;
+      const intercept = my - slope * mx;
+      let ssRes = 0;
+      for (let i = 0; i < x.length; i++) {
+        ssRes += (y[i] - (intercept + slope * x[i])) ** 2;
+      }
+      const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+      return { slope, intercept, r2 };
+    }
+
+    /* ---------- Gráficos ---------- */
+    function renderDashboard(optionalPresent) {
+      const strengths = rows.map((r) => r[TARGET]);
+      const average = mean(strengths);
+      const medianValue = median(strengths);
+      const modeValue = mode(strengths);
+      const deviation = stdDev(strengths);
+
+      $("m-avg").textContent = average.toFixed(2) + " Kg/m2";
+      $("m-max").textContent = Math.max(...strengths).toFixed(2) + " Kg/m2";
+      $("m-min").textContent = Math.min(...strengths).toFixed(2) + " Kg/m2";
+      $("m-count").textContent = rows.length.toLocaleString("es-ES");
+      $("m-age").textContent = mean(rows.map((r) => r[AGE])).toFixed(2) + " días";
+
+      $("distribution-stats").textContent =
+        `Media: ${average.toFixed(2)} Kg/m2 · Mediana: ${medianValue.toFixed(2)} Kg/m2 · ` +
+        `Moda: ${modeValue.toFixed(2)} Kg/m2 · Desviación estándar: ${deviation.toFixed(2)} Kg/m2`;
+
+      /* Histograma */
+      const histogram = {
+        x: strengths,
+        type: "histogram",
+        nbinsx: 30,
+        marker: { color: "#087e8b" },
+        hovertemplate: "Resistencia: %{x:.2f} Kg/m2<br>Frecuencia: %{y}<extra></extra>"
+      };
+      const histLayout = {
+        title: "Distribución de resistencia del concreto",
+        xaxis: { title: "Resistencia a la compresión (Kg/m2)" },
+        yaxis: { title: "Frecuencia" },
+        shapes: [
+          { x0: average, x1: average, line: { color: "red", dash: "dash", width: 2 } },
+          { x0: modeValue, x1: modeValue, line: { color: "green", dash: "dot", width: 2 } },
+          { x0: medianValue, x1: medianValue, line: { color: "blue", dash: "dashdot", width: 2 } }
+        ].map((s) => ({ ...s, type: "line", yref: "paper", y0: 0, y1: 1 })),
+        annotations: [
+          { x: average, y: 1, yref: "paper", text: `Media ${average.toFixed(2)}`, showarrow: false, yshift: 12, font: { color: "red" } },
+          { x: modeValue, y: 1, yref: "paper", text: `Moda ${modeValue.toFixed(2)}`, showarrow: false, yshift: 30, font: { color: "green" } },
+          { x: medianValue, y: 1, yref: "paper", text: `Mediana ${medianValue.toFixed(2)}`, showarrow: false, yshift: 48, font: { color: "blue" } }
+        ],
+        margin: { t: 90 }
+      };
+      Plotly.newPlot("histogram", [histogram], histLayout, { responsive: true });
+
+      /* Mapa de calor (sin columnas constantes) */
+      const allColumns = [
+        { label: "Edad (días)", column: AGE },
+        { label: "Vacíos (%)", column: VOIDS },
+        ...COMPONENTS.map((c) => ({ label: `${c.name} (kg/m³)`, column: c.column })),
+        ...optionalPresent.map((o) => ({ label: o.name, column: o.column })),
+        { label: "Resistencia (Kg/m2)", column: TARGET }
+      ];
+      const variable = allColumns.filter((c) => stdDev(rows.map((r) => r[c.column])) > 0);
+      const labels = variable.map((c) => c.label);
+      const matrix = variable.map((a) =>
+        variable.map((b) => correlation(rows.map((r) => r[a.column]), rows.map((r) => r[b.column])))
+      );
+      Plotly.newPlot("heatmap", [{
+        z: matrix, x: labels, y: labels, type: "heatmap", zmin: -1, zmax: 1,
+        colorscale: "RdBu", reversescale: true,
+        text: matrix.map((line) => line.map((v) => v.toFixed(2))),
+        texttemplate: "%{text}",
+        hovertemplate: "%{y} / %{x}: %{z:.2f}<extra></extra>",
+        colorbar: { title: "Correlación" }
+      }], {
+        title: "Correlación entre variables numéricas",
+        margin: { t: 55, r: 20, b: 130, l: 145 },
+        xaxis: { tickangle: -35, automargin: true },
+        yaxis: { automargin: true, autorange: "reversed" }
+      }, { responsive: true });
+
+      /* Dispersión 3D */
+      const cement = COMPONENTS[0].column;
+      const water = COMPONENTS[3].column;
+      Plotly.newPlot("scatter3d", [{
+        x: rows.map((r) => r[VOIDS]),
+        y: rows.map((r) => r[cement]),
+        z: rows.map((r) => r[TARGET]),
+        customdata: rows.map((r) => [r[water]]),
+        mode: "markers",
+        type: "scatter3d",
+        marker: {
+          size: 4, opacity: 0.75,
+          color: rows.map((r) => r[TARGET]),
+          colorscale: "Viridis",
+          colorbar: { title: "Resistencia (Kg/m2)" }
+        },
+        hovertemplate:
+          "Vacíos: %{x}%<br>Cemento: %{y} kg/m³<br>Resistencia: %{z} Kg/m2<br>Agua: %{customdata[0]} kg/m³<extra></extra>"
+      }], {
+        title: "Vacíos y cantidad de cemento vs resistencia del concreto",
+        scene: {
+          xaxis: { title: "Vacíos (%)" },
+          yaxis: { title: "Cemento (kg/m³)" },
+          zaxis: { title: "Resistencia (Kg/m2)" },
+          camera: { eye: { x: 1.6, y: 1.6, z: 1.2 } }
+        },
+        margin: { t: 50, l: 0, r: 0, b: 0 }
+      }, { responsive: true });
+
+      /* Serie por % de vacíos */
+      const groups = new Map();
+      rows.forEach((r) => {
+        const key = r[VOIDS];
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(r);
+      });
+      const keys = [...groups.keys()].sort((a, b) => a - b);
+      const avgOf = (group, column) => mean(group.map((r) => r[column]));
+      const serie = keys.map((k) => groups.get(k));
+      Plotly.newPlot("timeseries", [{
+        x: keys,
+        y: serie.map((g) => avgOf(g, TARGET)),
+        customdata: serie.map((g) => COMPONENTS.map((c) => avgOf(g, c.column))),
+        mode: "lines+markers",
+        type: "scatter",
+        line: { color: "#087e8b" },
+        hovertemplate:
+          "Vacíos (%)=%{x}<br>Resistencia promedio (Kg/m2)=%{y:.2f}<br>" +
+          COMPONENTS.map((c, i) => `${c.name} (kg/m³)=%{customdata[${i}]:.1f}`).join("<br>") +
+          "<extra></extra>"
+      }], {
+        title: "Resistencia promedio y diseño de mezcla por vacíos",
+        xaxis: { title: "Vacíos (%)" },
+        yaxis: { title: "Resistencia promedio (Kg/m2)" }
+      }, { responsive: true });
+
+      /* Modelo predictivo */
+      const xs = rows.map((r) => r[VOIDS]);
+      model = fitLinear(xs, strengths);
+      renderModel();
+    }
+
+    function renderModel() {
+      if (!model) return;
+      const xs = rows.map((r) => r[VOIDS]);
+      const ys = rows.map((r) => r[TARGET]);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const voidsValue = Number($("void-input").value);
+
+      if (!Number.isFinite(voidsValue)) {
+        $("prediction-result").textContent = "Ingresa un valor válido";
+        return;
+      }
+      const prediction = model.intercept + model.slope * voidsValue;
+      $("prediction-result").textContent = `Resistencia predicha: ${prediction.toFixed(2)} Kg/m2`;
+      $("model-r2").textContent = `R² en entrenamiento: ${model.r2.toFixed(4)}`;
+      $("model-warning").textContent =
+        voidsValue < minX || voidsValue > maxX
+          ? `Aviso: el valor está fuera del rango de tus datos (${minX} a ${maxX}). La predicción no es confiable.`
+          : "";
+
+      const lineX = [Math.min(minX, voidsValue), Math.max(maxX, voidsValue)];
+      Plotly.newPlot("model-chart", [
+        { x: xs, y: ys, mode: "markers", type: "scatter", name: "Datos", marker: { color: "#087e8b" } },
+        { x: lineX, y: lineX.map((v) => model.intercept + model.slope * v), mode: "lines", type: "scatter", name: "Ajuste lineal", line: { color: "red" } },
+        { x: [voidsValue], y: [prediction], mode: "markers", type: "scatter", name: "Predicción", marker: { color: "orange", size: 12, symbol: "diamond" } }
+      ], {
+        title: "Ajuste lineal: vacíos vs resistencia",
+        xaxis: { title: "Vacíos (%)" },
+        yaxis: { title: "Resistencia (Kg/m2)" }
+      }, { responsive: true });
+    }
+
+    $("void-input").addEventListener("input", renderModel);
+
+    /* ---------- Carga del archivo ---------- */
+    $("csv-file").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      $("status").classList.remove("error");
+      $("status").textContent = "Procesando archivo…";
+      try {
+        const counts = prepareData(await file.text());
+        renderDashboard(counts.optionalPresent);
+        $("status").textContent =
+          `Archivo: ${file.name} · ${counts.originalCount.toLocaleString("es-ES")} registros recibidos · ` +
+          `${counts.duplicates.toLocaleString("es-ES")} filas duplicadas excluidas · ` +
+          `${rows.length.toLocaleString("es-ES")} registros analizados.`;
+      } catch (error) {
+        $("status").classList.add("error");
+        $("status").textContent = error.message;
+      }
+    });
+  </script>
+</body>
+</html>
